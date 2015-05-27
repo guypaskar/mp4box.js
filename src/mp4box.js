@@ -621,6 +621,46 @@ MP4Box.prototype.seekTrack = function(time, useRap, trak) {
 	}
 }
 
+MP4Box.prototype.seekTrackTest = function(time, useRap, trak) {
+    var j;
+    var sample;
+    var rap_offset = Infinity;
+    var rap_time = 0;
+    var seek_offset = Infinity;
+    var endSegmentOffset;
+    var rap_seek_sample_num = 0;
+    var seek_sample_num = 0;
+    var timescale;
+    for (j = 0; j < trak.samples.length; j++) {
+        sample = trak.samples[j];
+        if (j === 0) {
+            seek_offset = sample.offset;
+            endSegmentOffset = trak.samples[j].offset;
+            seek_sample_num = 0;
+            timescale = sample.timescale;
+        } else if (sample.cts > time * sample.timescale) {
+            seek_offset = trak.samples[j-1].offset;
+            endSegmentOffset = trak.samples[j].offset;
+            seek_sample_num = j-1;
+            break;
+        }
+        if (useRap && sample.is_rap) {
+            rap_offset = sample.offset;
+            rap_time = sample.cts;
+            rap_seek_sample_num = j;
+        }
+    }
+    if (useRap) {
+        //trak.nextSample = rap_seek_sample_num;
+        Log.i("MP4Box", "Seeking to RAP sample "+trak.nextSample+" on track "+trak.tkhd.track_id+", time "+Log.getDurationString(rap_time, timescale) +" and offset: "+rap_offset);
+        return { offset: rap_offset, time: rap_time/timescale };
+    } else {
+        //trak.nextSample = seek_sample_num;
+        Log.i("MP4Box", "Seeking to sample "+trak.nextSample+" on track "+trak.tkhd.track_id+", time "+Log.getDurationString(time)+" and offset: "+rap_offset);
+        return { offset: seek_offset,endOffset:endSegmentOffset, time: time };
+    }
+}
+
 /* Finds the byte offset in the file corresponding to the given time or to the time of the previous RAP */
 MP4Box.prototype.seek = function(time, useRap) {
 	var moov = this.inputIsoFile.moov;
@@ -655,6 +695,57 @@ MP4Box.prototype.seek = function(time, useRap) {
 		return seek_info;
 	}
 }
+
+MP4Box.prototype.secondsToOffset = function(time, currentOffsetToDownload ,useRap) {
+    var moov = this.inputIsoFile.moov;
+    var trak;
+    var trak_seek_info;
+    var i;
+    var seek_info = { offset: Infinity, time: Infinity,endOffset:-Infinity };
+    if (!this.inputIsoFile.moov) {
+        throw "Cannot seek: moov not received!";
+    } else {
+        for (i = 0; i<moov.traks.length; i++) {
+            trak = moov.traks[i];
+            trak_seek_info = this.seekTrackTest(time, useRap, trak);
+            if (trak_seek_info.offset < seek_info.offset) {
+                seek_info.offset = trak_seek_info.offset;
+
+
+            }
+
+            if(trak_seek_info.endOffset > seek_info.endOffset){
+                seek_info.endOffset = trak_seek_info.endOffset;
+            }
+
+            if (trak_seek_info.time < seek_info.time) {
+                seek_info.time = trak_seek_info.time;
+            }
+        }
+        if (seek_info.offset === Infinity ||  seek_info.endOffset === -Infinity) {
+            /* No sample info, in all tracks, cannot seek */
+            //return { offset: this.inputIsoFile.nextParsePosition, time: 0 };
+            seek_info = { offset: this.inputIsoFile.nextParsePosition, time: 0 };
+        } else {
+            //this.inputIsoFile.nextSeekPosition = currentOffsetToDownload;
+            //return seek_info;
+
+            var index = this.inputIsoFile.findPosition(true, seek_info.offset);
+            var index1 = this.inputIsoFile.findPosition(true, seek_info.endOffset);
+            if (index !== -1) {
+                seek_info.offset = this.inputIsoFile.findEndContiguousBuf(index);
+            }
+
+            if (index1 !== -1) {
+                seek_info.endOffset= this.inputIsoFile.findEndContiguousBuf(index1);
+            }
+
+
+        }
+
+        return seek_info;
+    }
+};
 
 MP4Box.prototype.getTrackSamplesInfo = function(track_id) {
 	var track = this.inputIsoFile.getTrackById(id);
